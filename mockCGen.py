@@ -50,17 +50,20 @@ class MockCGen:
     # Group2 (func name)                    (\w*?)
     # Space between                               \s*?
     # Group3 (argument)                               \((.*?)\);
-    #----RE match for ..)..(..  pattern----
-    # e.g.     "*ledCB)(bool bOn)"
+    #----RE match for ..)..(..  pattern in arguments----
+    # e.g.     "*fooCB)(bool bBar)"
     pattBadParenthesis = re.compile(r'^[^(]*(?=\))')
     # Start of string          ^
     # Match any except '('             [^(]*
     # Before matching ')'                   (?=\))
-    #----RE match for argument (i.e. last word in definition (e.g. volatile uint16_t **ppusValue))----
+    #----RE match for argument (i.e. last word in definition)----
+    # e.g. volatile uint16_t **ppusValue))
     pattArg = re.compile(r'(\w+)$')
     #----RE match for '...' in the arguments----
+    # e.g.  printf(...)
     pattArgEllipsis = re.compile('\.{3}')
-    #----RE match for function pointer 'type (*func_ptr)(...)' in the arguments----
+    #----RE match for function pointer in the arguments----
+    # e.g. 'type (*func_ptr)(...)'
     pattArgPFunc = re.compile('(\w*)\)\s*?\(')
     # Search for a word        (\w*)
     # That is before ") ("          \)\s*?\(
@@ -114,26 +117,33 @@ class MockCGen:
         @param      self  The object
         @param      args  The argument string
 
-        @return     argument string that is passed to the callee
+        @return     argument string that is passed to the callee, and number of
+                    arguments.  If return is (None, 0), then arguments are not supported
         '''
         strList = []
         try:
+            #TODO: Should handle comma splitting with case:"void (*fooCB)(int y, int z)"
             argList = args.split(',')
             for arg in argList:
-                match1 = self.pattArg.search(arg)
-                match2 = self.pattArgPFunc.search(arg)
+                match1 = self.pattArgEllipsis.search(arg)
+                match2 = self.pattArg.search(arg)
+                match3 = self.pattArgPFunc.search(arg)
                 if match1:
-                    # Sanitize the argument
-                    arg = match1.group(1)
-                    if arg == 'void':
-                        arg = ''
-                    strList.append(arg)
+                    # GMock doesn't support ellipsis (...)
+                    return None, 0
                 elif match2:
-                    strList.append(match2.group(1))
+                    # Retrieve the argument
+                    arg = match2.group(1)
+                    # If the argument is foo(void), then don't pass to callee
+                    if arg != 'void':
+                        strList.append(arg)
+                elif match3:
+                    # return the function pointer portion
+                    strList.append(match3.group(1))
         except:
             logging.error(traceback.format_exc())
-        # Return the comma separate string from list
-        return ', '.join(strList)
+        # Return the comma separate string and number of arguments
+        return ', '.join(strList), len(strList)
 
     def BuildMockCHeader(self, file, className, isGMethodReqd = False):
         '''
@@ -176,7 +186,11 @@ class MockCGen:
             for func in funcList:
                 returnField, funcField, argsField = func[0], func[1], func[2]
                 # Write the virtual member
-                file.write('    virtual %s%s(%s) = 0;\n' % (returnField, funcField, argsField))
+                argsStr, argsCnt = self.ParseArgs(argsField)
+                if argsStr == None:
+                    file.write('    // Not supported: virtual %s%s(%s) = 0;\n' % (returnField, funcField, argsField))
+                else:
+                    file.write('    virtual %s%s(%s) = 0;\n' % (returnField, funcField, argsField))
         file.write('};\n')
         file.write('\n')
         if isGMethodReqd:
@@ -192,10 +206,11 @@ class MockCGen:
                 for func in funcList:
                     returnField, funcField, argsField = func[0], func[1], func[2]
                     # Write the MOCK_METHOD
-                    argsCnt = len(argsField.split(','))
-                    if argsCnt == 1 and argsField == "void":
-                        argsCnt = 0
-                    file.write('    MOCK_METHOD%d(%s,%s(%s));\n' % (argsCnt, funcField, returnField, argsField))
+                    argsStr, argsCnt = self.ParseArgs(argsField)
+                    if argsStr == None:
+                        file.write('    // Not Supported: MOCK_METHOD%d(%s,%s(%s));\n' % (argsCnt, funcField, returnField, argsField))
+                    else:
+                        file.write('    MOCK_METHOD%d(%s,%s(%s));\n' % (argsCnt, funcField, returnField, argsField))
             file.write('};\n')
             file.write('\n')
         else:
@@ -237,14 +252,14 @@ class MockCGen:
             funcList = self.fileDict[fileName]
             for func in funcList:
                 returnField, funcField, argsField = func[0], func[1], func[2]
-                if self.pattArgEllipsis.search(argsField):
-                    file.write("// Can't generate fake functions that uses '...' in arguments\n")
+                # Generate the arguments
+                argsStr, argCnt = self.ParseArgs(argsField)
+                if argsStr == None:
+                    file.write("// This function declaration is not supported by gMock\n")
                     file.write('// WEAK %s%s(%s) { }\n\n' % (returnField, funcField, argsField))
                 else:
                     file.write('WEAK %s%s(%s)\n' % (returnField, funcField, argsField))
                     file.write('{\n')
-                    # Generate the arguments
-                    argsStr = self.ParseArgs(argsField)
                     # Generate call string
                     callStr = '_%s.%s(%s);\n' % (className, funcField, argsStr)
                     # Check if a return is required (i.e. not void or has pointer)
@@ -261,7 +276,7 @@ def main(args):
     parser.add_argument('-g', '--gmethod', action="store_true", help="Generate GMOCK methods directly")
     parser.add_argument('-l', '--list', action="store", help="Build mock functions from file list")
     parser.add_argument('-m', '--mock', action="store", default="mock", help="Base name for class and files")
-    parser.add_argument('-p', '--path', action="store", help="Output path")
+    parser.add_argument('-p', '--path', action="store", default="", help="Output path")
     parser.add_argument('srcHdr', nargs='*')
     args = parser.parse_args()
 
