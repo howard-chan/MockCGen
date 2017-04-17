@@ -220,6 +220,9 @@ class MockCGen:
             file.write('// googlemock/scripts/generator/gmock_gen.py %s.h >> %s.hpp\n' % (className, className))
             file.write('#include "%s.hpp"\n' % className)
             file.write('\n')
+        # Generate the Mock initializer declaration
+        file.write('// This must be called before the "C" mock is used\n')
+        file.write('void %s_init(MockI%s *px%s);\n\n' % (className, className, className))
         file.write('} // extern "C"\n')
         file.write('#endif // __%s_H__\n' % className.upper())
 
@@ -242,9 +245,16 @@ class MockCGen:
         file.write('extern "C"\n')
         file.write('{\n')
         file.write('\n')
-        # Create mock instance
         file.write('using namespace ::testing;\n')
-        file.write('MockI%s _%s;\n' % (className, className))
+        # Create mock pointer and initializer
+        file.write('static MockI%s _px%sDummy;\n' % (className, className))
+        file.write('MockI%s *_px%s = &_px%sDummy;\n' % (className, className, className))
+        file.write('\n')
+        file.write('// This must be called before the "C" mock is used\n')
+        file.write('void %s_init(MockI%s *px%s)\n' % (className, className, className))
+        file.write('{\n')
+        file.write('    _px%s = px%s;\n' % (className, className))
+        file.write('}\n')
         file.write('\n')
         # Generate the fake functions
         for fileName in self.fileList:
@@ -261,7 +271,7 @@ class MockCGen:
                     file.write('WEAK %s%s(%s)\n' % (returnField, funcField, argsField))
                     file.write('{\n')
                     # Generate call string
-                    callStr = '_%s.%s(%s);\n' % (className, funcField, argsStr)
+                    callStr = '_px%s->%s(%s);\n' % (className, funcField, argsStr)
                     # Check if a return is required (i.e. not void or has pointer)
                     if func[0].find('void') < 0 or returnField.find('*') >= 0:
                         callStr = 'return ' + callStr
