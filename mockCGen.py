@@ -44,7 +44,7 @@ class MockCGen:
     # e.g.          "void          reset      (bool bTrue);"
     pattFunc = re.compile(r'^\s*?(?=\w)(.*?)(\w*?)\s*?\((.*?)\);', re.MULTILINE)
     # Start of string       ^
-    # Consume any space      \x*?
+    # Consume any space      \s*?
     # Lookahead for words        (?=\w)
     # Group1 (return type)             (.*?)
     # Group2 (func name)                    (\w*?)
@@ -53,7 +53,7 @@ class MockCGen:
     #----RE match for ..)..(..  pattern in arguments----
     # e.g.     "*fooCB)(bool bBar)"
     pattBadParenthesis = re.compile(r'^[^(]*(?=\))')
-    # Start of string          ^
+    # Start of string                 ^
     # Match any except '('             [^(]*
     # Before matching ')'                   (?=\))
     #----RE match for argument (i.e. last word in definition)----
@@ -67,6 +67,19 @@ class MockCGen:
     pattArgPFunc = re.compile('(\w*)\)\s*?\(')
     # Search for a word        (\w*)
     # That is before ") ("          \)\s*?\(
+    #----RE match for curly braces----
+    # e.g. 'static inline int foo(void) { return 0; }'
+    pattBrace = re.compile(r'{[^{}]*}')
+    # Match open brace       {
+    # Match any except brace  [^{}]*
+    # Match close brace             }
+    #----RE match for comment----
+    # e.g. '/* This is a comment */' or foo() // This is a comment
+    pattComment = re.compile(r'(/[*](?:.|[\r\n])*?[*]/)|(//.*)')
+    # Match open comment        /[*]
+    # Match anything or <CR>/<LF>   (?:.|[\r\n])*?
+    # Match close comment                         [*]/
+    # Or match C++ style comment                       |(//.*)
 
     #====Objects for file generation====
     # Defining the message and file lists
@@ -86,10 +99,15 @@ class MockCGen:
         @param      header    The header
         '''
         funcList = []
-        # Step 1: Parse the file for lines that match the function declaration
+        # Step 1: Remove all comments
+        header = self.pattComment.sub('', header)
+        # Step 2: Recursively filter out braces "{}" found in header (e.g. inline functions)
+        while self.pattBrace.findall(header):
+            header = self.pattBrace.sub('', header)
+        # Step 3: Parse the file for lines that match the function declaration
         match = self.pattFunc.findall(header)
         for func in match:
-            # Step 1.1: Process the components of the matched function declaration
+            # Step 4.1: Process the components of the matched function declaration
             returnField, funcField, argsField = func[0], func[1], func[2]
             # Check that the fields are valid (i.e. a bad match will have empty fields)
             if len(returnField.lstrip(' ')) == 0 or \
@@ -100,11 +118,11 @@ class MockCGen:
             elif self.pattBadParenthesis.search(argsField) or \
                  self.pattBadParenthesis.search(funcField):
                 continue
-            # Step 1.2: Remove extern specifier if any, since they aren't used in classes
+            # Step 4.2: Remove extern specifier if any, since they aren't used in classes
             returnField = returnField.replace('extern','')
-            # Step 1.3: Add new tuple to list
+            # Step 4.3: Add new tuple to list
             funcList.append((returnField, funcField, argsField))
-        # Step 2: Add to fileList and dictionary if functions were found
+        # Step 5: Add to fileList and dictionary if functions were found
         if funcList:
             self.fileList.append(fileName)
             self.fileDict[fileName] = funcList
