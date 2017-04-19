@@ -58,7 +58,10 @@ class MockCGen:
     # Before matching ')'                   (?=\))
     #----RE match for argument (i.e. last word in definition)----
     # e.g. volatile uint16_t **ppusValue))
-    pattArg = re.compile(r'(\w+)$')
+    pattArg = re.compile(r'(\w+)(\[.*\])?$')
+    # Match the word group (\w+)
+    # Match 0 or 1 "[ ]"        (\[.*\])?
+    # End of line                        $
     #----RE match for '...' in the arguments----
     # e.g.  printf(...)
     pattArgEllipsis = re.compile('\.{3}')
