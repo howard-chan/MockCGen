@@ -31,6 +31,10 @@ import argparse
 import logging
 import traceback
 
+#TODO:
+# Add Strong List (i.e. no WEAK attribute)
+#
+
 class MockCGen:
     '''
     @brief      Generates Interface Class and Fake Stubs:
@@ -42,14 +46,15 @@ class MockCGen:
     #====RE objects for parsing header files====
     #----RE match for <return type> <func name> (<arguments>);----
     # e.g.          "void          reset      (bool bTrue);"
-    pattFunc = re.compile(r'^\s*?(?=\w)(.*?)(\w*?)\s*?\((.*?)\);', re.MULTILINE)
+    pattFunc = re.compile(r'^\s*?(?=\w)(.*?)(\w*?)\s*?\(([^;]*?)\)\s*;', re.MULTILINE)
     # Start of string       ^
     # Consume any space      \s*?
     # Lookahead for words        (?=\w)
     # Group1 (return type)             (.*?)
     # Group2 (func name)                    (\w*?)
     # Space between                               \s*?
-    # Group3 (argument)                               \((.*?)\);
+    # Group3 (argument) anything but ";"              \(([^;]*?)
+    # Closing statement                                         \)\s*;
     #----RE match for ..)..(..  pattern in arguments----
     # e.g.     "*fooCB)(bool bBar)"
     pattBadParenthesis = re.compile(r'^[^(]*(?=\))')
@@ -70,12 +75,13 @@ class MockCGen:
     pattArgPFunc = re.compile('(\w*)\)\s*?\(')
     # Search for a word        (\w*)
     # That is before ") ("          \)\s*?\(
-    #----RE match for curly braces----
+    #----RE match for curly braces, but ignore extern "C"----
     # e.g. 'static inline int foo(void) { return 0; }'
-    pattBrace = re.compile(r'{[^{}]*}')
-    # Match open brace       {
-    # Match any except brace  [^{}]*
-    # Match close brace             }
+    pattBrace = re.compile(r'(?<!"C" ){[^{}]*}')
+    # Negative look behind   (?<!"C" )
+    # Match open brace                {
+    # Match any except brace           [^{}]*
+    # Match close brace                      }
     #----RE match for comment----
     # e.g. '/* This is a comment */' or foo() // This is a comment
     pattComment = re.compile(r'(/[*](?:.|[\r\n])*?[*]/)|(//.*)')
@@ -88,6 +94,16 @@ class MockCGen:
     # Defining the message and file lists
     fileList = []
     fileDict = {}
+
+    def __init__(self, weak):
+        '''
+        @brief      Constructs the object.
+
+        @param      self  The object
+        @param      weak  The compiler specific string for "weak" attribute
+                          (e.g. __attribute__(weak))
+        '''
+        self.weak = weak
 
     def ParseHeader(self, fileName, header):
         '''
@@ -121,6 +137,9 @@ class MockCGen:
             elif self.pattBadParenthesis.search(argsField) or \
                  self.pattBadParenthesis.search(funcField):
                 continue
+            # Check if this is an inline function which can't be mocked
+            elif "inline" in returnField:
+               continue
             # Step 4.2: Remove extern specifier if any, since they aren't used in classes
             returnField = returnField.replace('extern','')
             # Step 4.3: Add new tuple to list
@@ -143,7 +162,6 @@ class MockCGen:
         '''
         strList = []
         try:
-            #TODO: Should handle comma splitting with case:"void (*fooCB)(int y, int z)"
             argList = args.split(',')
             for arg in argList:
                 match1 = self.pattArgEllipsis.search(arg)
@@ -265,17 +283,24 @@ class MockCGen:
         file.write('\n')
         file.write('extern "C"\n')
         file.write('{\n')
+        file.write('using namespace ::testing;\n\n')
+        file.write('//=============================================================\n')
+        # Set the WEAK macro to the compiler specific implementation
+        file.write('// Define WEAK to the compiler specific "weak" attribute\n')
+        file.write('#undef  WEAK\n');
+        file.write('#define WEAK    %s\n' % self.weak);
         file.write('\n')
-        file.write('using namespace ::testing;\n')
         # Create mock pointer and initializer
+        file.write('// Define the singleton pointer to the mock implementation\n')
         file.write('static MockI%s _px%sDummy;\n' % (className, className))
-        file.write('MockI%s *_px%s = &_px%sDummy;\n' % (className, className, className))
+        file.write('static MockI%s *_px%s = &_px%sDummy;\n' % (className, className, className))
         file.write('\n')
         file.write('// This must be called before the "C" mock is used\n')
         file.write('void %s_init(MockI%s *px%s)\n' % (className, className, className))
         file.write('{\n')
         file.write('    _px%s = px%s;\n' % (className, className))
         file.write('}\n')
+        file.write('//=============================================================\n')
         file.write('\n')
         # Generate the fake functions
         for fileName in self.fileList:
@@ -308,6 +333,7 @@ def main(args):
     parser.add_argument('-l', '--list', action="store", help="Build mock functions from file list")
     parser.add_argument('-m', '--mock', action="store", default="mock", help="Base name for class and files")
     parser.add_argument('-p', '--path', action="store", default="", help="Output path")
+    parser.add_argument('-w', '--weak', action="store", default="__attribute__((weak))", help="Compiler specific weak attribute")
     parser.add_argument('srcHdr', nargs='*')
     args = parser.parse_args()
 
@@ -322,7 +348,7 @@ def main(args):
     if args.srcHdr:
         print "\tGenerating Mocks:"
         # Build the mock list
-        mcg = MockCGen()
+        mcg = MockCGen(args.weak)
         for filename in args.srcHdr:
             with open(filename.strip('\n')) as f:
                 print "\t\tProcessing %s" % filename.strip('\n')
