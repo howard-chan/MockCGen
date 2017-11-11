@@ -31,10 +31,6 @@ import argparse
 import logging
 import traceback
 
-#TODO:
-# Add Strong List (i.e. no WEAK attribute)
-#
-
 class MockCGen:
     '''
     @brief      Generates Interface Class and Fake Stubs:
@@ -262,6 +258,8 @@ class MockCGen:
         # Generate the Mock initializer declaration
         file.write('// This must be called before the "C" mock is used\n')
         file.write('void %s_init(MockI%s *px%s);\n\n' % (className, className, className))
+        file.write('// Useful for overriding a mock\n')
+        file.write('MockI%s *%s_getInstance(void);\n\n' % (className, className))
         file.write('} // extern "C"\n')
         file.write('#endif // __%s_H__\n' % className.upper())
 
@@ -278,7 +276,6 @@ class MockCGen:
         file.write('///////////////////////////////////////////////////////////////\n')
         file.write('\n')
         file.write('#include <stdint.h>\n')
-        file.write('#include "etypes.h"\n')
         file.write('#include "%s.h"\n' % className)
         file.write('\n')
         file.write('extern "C"\n')
@@ -299,6 +296,12 @@ class MockCGen:
         file.write('void %s_init(MockI%s *px%s)\n' % (className, className, className))
         file.write('{\n')
         file.write('    _px%s = px%s;\n' % (className, className))
+        file.write('}\n')
+        file.write('\n')
+        file.write('// Useful for overriding a mock\n')
+        file.write('MockI%s *%s_getInstance(void)\n' % (className, className))
+        file.write('{\n')
+        file.write('    return _px%s;\n' % className)
         file.write('}\n')
         file.write('//=============================================================\n')
         file.write('\n')
